@@ -23,7 +23,9 @@ jobs:
             exit 1
           fi
 
-          curl --fail --location --silent --show-error             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt"             --output /tmp/publish-bridge.txt
+          curl --fail --location --silent --show-error \
+            "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
+            --output /tmp/publish-bridge.txt
 
       - name: Write files from bridge
         run: |
@@ -32,6 +34,7 @@ jobs:
           from pathlib import Path
 
           bridge = Path("/tmp/publish-bridge.txt")
+
           request = json.loads(
               bridge.read_text(encoding="utf-8-sig").strip()
           )
@@ -77,6 +80,14 @@ jobs:
                   exist_ok=True
               )
 
+              # SOURCE TEXT IS SACRED.
+              #
+              # Treat content as opaque UTF-8 text.
+              # Do not trim, normalize, pretty-print, reformat,
+              # convert, clean up, or otherwise modify it.
+              #
+              # The exact string supplied in the bridge is the
+              # exact string that must be written to the file.
               target.write_text(
                   content,
                   encoding="utf-8"
@@ -102,13 +113,15 @@ jobs:
 
       - name: Commit and push
         run: |
-          if git diff --quiet &&              [ -z "$(git status --porcelain)" ]; then
+          if git diff --quiet && \
+             [ -z "$(git status --porcelain)" ]; then
             echo "No repository changes to commit."
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
-          git config user.email             "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add --all
           git commit -F /tmp/commit-message.txt
