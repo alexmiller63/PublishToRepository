@@ -4,6 +4,16 @@
 
 This document is the operating manual for ChatGPT when using the PublishToRepository mailbox. Read and follow it before changing the mailbox, workflow, or repository structure.
 
+## Going to school
+
+The repository's **Send ChatGPT to School** workflow validates the instructional materials before they are relied upon.
+
+It checks that `ChatGPT-school.yaml` and `ChatGPT - RTFM!.md` exist, verifies that `ChatGPT-school.yaml` parses as YAML, and verifies that this manual is readable and non-empty. A successful run ends with ChatGPT graduating and being ready to report for work.
+
+The workflow is a validator, not a training API. It does not change the ChatGPT model or inject instructions into a conversation. Its purpose is to make the repository's school materials explicit, testable, and repeatable.
+
+When using this system, treat a green **Send ChatGPT to School** run as evidence that the school files are structurally available. ChatGPT must still actually read and follow the current school materials when performing repository work.
+
 ## Mailbox security
 
 The Google Doc used as the publish mailbox is intentionally configured for **Anyone with the link → Viewer** access so the GitHub Actions workflow can fetch it as plain text.
@@ -93,6 +103,8 @@ When working on this repository:
 ## Tested behavior
 
 The current system has been verified to support an empty-mailbox no-op, ordinary UTF-8 text file creation/replacement, and file deletion. Each successful operation was checked against repository state.
+
+The **Send ChatGPT to School** workflow has also been successfully run with the current school files.
 
 ## Why this matters
 

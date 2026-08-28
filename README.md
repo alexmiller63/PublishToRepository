@@ -20,6 +20,16 @@ When the **Publish to Repository** GitHub Actions workflow is run manually, it:
 
 The workflow has no parameters. The Google Doc is the mailbox between ChatGPT and GitHub.
 
+## ChatGPT School
+
+The repository also contains a manually triggered **Send ChatGPT to School** workflow at `.github/workflows/send-chatgpt-to-school.yaml`.
+
+The school workflow is read-only. It checks that `ChatGPT-school.yaml` and `ChatGPT - RTFM!.md` exist, validates `ChatGPT-school.yaml` as YAML, verifies that the operating manual is readable and non-empty, and reports successful graduation when those checks pass.
+
+This workflow does not retrain or modify ChatGPT. It provides a repeatable validation step for the repository's machine-readable curriculum and operating manual. ChatGPT can then read those repository files as instructions before working with the publisher.
+
+The first **Send ChatGPT to School** run was successfully tested after the workflow was created.
+
 ## Mailbox lifecycle
 
 The mailbox contains either one JSON publish request or nothing.
