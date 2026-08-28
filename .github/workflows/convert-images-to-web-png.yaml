@@ -24,23 +24,41 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install Pillow pillow-heif
 
+      - name: Normalize web PNG filenames
+        run: |
+          find images -maxdepth 1 -type f -name '*-web.PNG' -print0 |
+          while IFS= read -r -d '' source; do
+            destination="${source%.PNG}.png"
+
+            if [ -e "$destination" ]; then
+              echo "ERROR: cannot rename because destination already exists:"
+              echo "  $source"
+              echo "  $destination"
+              exit 1
+            fi
+
+            echo "Renaming: $source"
+            echo "      to: $destination"
+            mv -- "$source" "$destination"
+          done
+
       - name: Convert images to web PNG
         run: |
           python tools/convert-images-to-web-png.py \
             --input-dir images \
             --output-dir images
 
-      - name: Commit generated web PNG files
+      - name: Commit generated and normalized web PNG files
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add images/*-web.png
+          git add -A images
 
           if git diff --cached --quiet; then
-            echo "No new web PNG files to commit."
+            echo "No web PNG changes to commit."
             exit 0
           fi
 
-          git commit -m "Generate web-sized PNG images"
+          git commit -m "Generate and normalize web PNG images"
           git push
