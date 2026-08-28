@@ -1,0 +1,17 @@
+version: 1
+purpose: Guide ChatGPT in constructing PublishToRepository mailbox JSON.
+mailbox:
+  format: json
+  public_read: true
+  secrets_allowed: false
+request:
+  required: [commit_message, files, delete]
+  files:
+    item_required: [path, content_base64]
+  delete:
+    item_type: string
+rules:
+  - Encode complete UTF-8 file bytes as Base64.
+  - Never put secrets in the mailbox.
+  - Verify existing paths before modifying or deleting.
+  - The workflow is the final validator; this file is guidance.
