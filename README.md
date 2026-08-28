@@ -24,7 +24,45 @@ The workflow has no parameters. The Google Doc is the mailbox between ChatGPT an
 
 The mailbox contains either one JSON publish request or nothing.
 
-After a request has been successfully processed, the mailbox should be cleared. An empty mailbox is the normal idle state; running the workflow with an empty mailbox is safe and produces no repository commit.
+The normal operating cycle is:
+
+1. ChatGPT verifies the repository state and prepares one complete request.
+2. ChatGPT replaces the mailbox contents with that request.
+3. The user manually runs **Publish to Repository**.
+4. The workflow validates, applies, commits, and pushes the requested changes.
+5. The resulting repository state is verified.
+6. Only after successful verification, ChatGPT clears the mailbox.
+
+An empty mailbox is the normal idle state. Running the workflow with an empty mailbox is a safe no-op and produces no repository commit.
+
+If publication fails, do **not** clear the mailbox until the failure has been diagnosed. Preserving the request makes the failure reproducible and prevents loss of the intended change.
+
+## Verified behavior
+
+The current implementation has been tested for:
+
+- an empty-mailbox successful no-op;
+- creating or replacing an ordinary UTF-8 text file;
+- deleting an existing ordinary file;
+- committing and pushing those changes to `main`.
+
+Repository state, not merely a green workflow badge, is the final verification of success.
+
+## Workflow-file limitation
+
+The publisher is intended for ordinary repository files.
+
+Under the current GitHub authorization, a publish request that tries to create or modify a file under `.github/workflows/` can be rejected at `git push` because the GitHub App/token does not have the separate workflow-modification permission.
+
+Therefore, changes to `.github/workflows/*` must currently be edited and committed outside the mailbox publisher, unless the authorization model is deliberately changed and tested.
+
+Do not use the mailbox to self-modify the publishing workflow under the current permission model.
+
+## Mailbox security
+
+The mailbox is publicly readable because the workflow fetches the Google Doc through its plain-text export URL.
+
+Treat the mailbox as public transport, not secure storage. Never put passwords, access tokens, API keys, credentials, private personal information, or other secrets in it. Base64 preserves bytes; it does not provide secrecy.
 
 ## Publish request format
 
@@ -43,3 +81,8 @@ The mailbox contains one JSON object:
     "old-example.txt"
   ]
 }
+```
+
+`content_base64` is the Base64 encoding of the complete desired UTF-8 file contents. File entries are complete replacements, not patches.
+
+Before modifying or deleting an existing file, verify its exact repository path and current contents. Never guess an existing filename or path.
