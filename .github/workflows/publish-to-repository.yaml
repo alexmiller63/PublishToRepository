@@ -6,6 +6,9 @@
 # validates the request, applies the requested text-file changes, and commits
 # them to this repository.
 #
+# An empty mailbox is a normal idle state. It means there is nothing to
+# publish and the workflow exits successfully without changing the repository.
+#
 # The Google Doc ID lives in tools/id.txt so the workflow itself does not need
 # to change if the mailbox contents change.
 
@@ -16,7 +19,7 @@ name: Publish to Repository
 on:
   workflow_dispatch:
 
-# The final step commits the requested changes back to this repository.
+# The final step may commit requested changes back to this repository.
 permissions:
   contents: write
 
@@ -30,9 +33,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # Export the mailbox as plain text. The document itself contains only
-      # the JSON request; no Markdown fences or explanatory prose belong in it.
-      - name: Fetch publish bridge
+      # Export the mailbox as plain text. The document itself contains either
+      # one JSON request or nothing at all; no Markdown fences or explanatory
+      # prose belong in it.
+      - name: Fetch publish mailbox
         run: |
           DOC_ID="$(tr -d '[:space:]' < tools/id.txt)"
 
@@ -43,12 +47,12 @@ jobs:
 
           curl --fail --location --silent --show-error \
             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
-            --output /tmp/publish-bridge.txt
+            --output /tmp/publish-mailbox.txt
 
       # Parse and validate the mailbox before touching repository files.
       # File contents travel as Base64 so Google Docs cannot reformat, quote,
       # normalize, or otherwise munge the source text in transit.
-      - name: Apply changes from bridge
+      - name: Apply changes from mailbox
         run: |
           python3 - <<'PY'
           import base64
@@ -56,20 +60,38 @@ jobs:
           import json
           from pathlib import Path
 
-          bridge = Path("/tmp/publish-bridge.txt")
+          mailbox = Path("/tmp/publish-mailbox.txt")
 
-          # utf-8-sig accepts an optional BOM. strip() tolerates harmless
-          # leading/trailing whitespace, but json.loads still requires exactly
-          # one JSON value and rejects extra payloads or trailing prose.
+          # utf-8-sig accepts an optional BOM. Whitespace alone counts as an
+          # empty mailbox and is a normal, successful no-op.
+          mailbox_text = mailbox.read_text(
+              encoding="utf-8-sig"
+          ).strip()
+
+          if not mailbox_text:
+              print(
+                  "Mailbox is empty. "
+                  "Nothing to publish."
+              )
+
+              Path(
+                  "/tmp/commit-message.txt"
+              ).write_text(
+                  "Publish repository changes",
+                  encoding="utf-8"
+              )
+
+              raise SystemExit(0)
+
+          # A non-empty mailbox must contain exactly one JSON object.
+          # json.loads rejects duplicate payloads and trailing prose.
           request = json.loads(
-              bridge.read_text(
-                  encoding="utf-8-sig"
-              ).strip()
+              mailbox_text
           )
 
           if not isinstance(request, dict):
               raise SystemExit(
-                  "Bridge must contain a JSON object"
+                  "Mailbox must contain a JSON object"
               )
 
           # A request may write files, delete files, or do both.
@@ -88,7 +110,7 @@ jobs:
 
           if not files and not delete:
               raise SystemExit(
-                  "Bridge must contain files or delete entries"
+                  "Mailbox must contain files or delete entries"
               )
 
           root = Path.cwd().resolve()
@@ -231,9 +253,9 @@ jobs:
           )
           PY
 
-      # Commit everything changed by the mailbox request. If the requested
-      # state already matches the repository, finish successfully with no
-      # empty commit.
+      # Commit everything changed by the mailbox request. An empty mailbox,
+      # or a request whose desired state already exists, reaches this step
+      # with no Git changes and exits successfully without creating a commit.
       - name: Commit and push
         run: |
           if git diff --quiet && \
