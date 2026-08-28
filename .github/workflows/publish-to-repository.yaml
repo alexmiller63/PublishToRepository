@@ -1,8 +1,22 @@
+# Publish to Repository
+#
+# This is the normal, parameterless publishing path.
+# A Google Doc acts as a small mailbox: ChatGPT places one JSON request in
+# the document, then this workflow exports that document as plain text,
+# validates the request, applies the requested text-file changes, and commits
+# them to this repository.
+#
+# The Google Doc ID lives in tools/id.txt so the workflow itself does not need
+# to change if the mailbox contents change.
+
 name: Publish to Repository
 
+# Publishing is deliberately manual. After the mailbox has been prepared,
+# press "Run workflow" in GitHub Actions.
 on:
   workflow_dispatch:
 
+# The final step commits the requested changes back to this repository.
 permissions:
   contents: write
 
@@ -11,9 +25,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Work on a normal checkout so filesystem operations and git commands
+      # behave exactly as they would in a local clone.
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Export the mailbox as plain text. The document itself contains only
+      # the JSON request; no Markdown fences or explanatory prose belong in it.
       - name: Fetch publish bridge
         run: |
           DOC_ID="$(tr -d '[:space:]' < tools/id.txt)"
@@ -27,6 +45,9 @@ jobs:
             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
             --output /tmp/publish-bridge.txt
 
+      # Parse and validate the mailbox before touching repository files.
+      # File contents travel as Base64 so Google Docs cannot reformat, quote,
+      # normalize, or otherwise munge the source text in transit.
       - name: Apply changes from bridge
         run: |
           python3 - <<'PY'
@@ -37,6 +58,9 @@ jobs:
 
           bridge = Path("/tmp/publish-bridge.txt")
 
+          # utf-8-sig accepts an optional BOM. strip() tolerates harmless
+          # leading/trailing whitespace, but json.loads still requires exactly
+          # one JSON value and rejects extra payloads or trailing prose.
           request = json.loads(
               bridge.read_text(
                   encoding="utf-8-sig"
@@ -48,6 +72,7 @@ jobs:
                   "Bridge must contain a JSON object"
               )
 
+          # A request may write files, delete files, or do both.
           files = request.get("files", [])
           delete = request.get("delete", [])
 
@@ -68,6 +93,8 @@ jobs:
 
           root = Path.cwd().resolve()
 
+          # Resolve every requested path underneath the checked-out repository.
+          # This blocks absolute/parent traversal from escaping the repo.
           def resolve_repository_path(path):
               if not isinstance(path, str) or not path.strip():
                   raise SystemExit(
@@ -86,6 +113,9 @@ jobs:
 
               return target
 
+          # Write complete files rather than patches. This keeps the mailbox
+          # protocol simple and makes the committed file exactly match the
+          # bytes supplied in content_base64.
           for item in files:
               if not isinstance(item, dict):
                   raise SystemExit(
@@ -110,6 +140,8 @@ jobs:
                       "content_base64"
                   )
 
+              # validate=True rejects malformed Base64 instead of trying to
+              # recover silently from damaged mailbox data.
               try:
                   content_bytes = (
                       base64.b64decode(
@@ -126,6 +158,8 @@ jobs:
                       f"for {path}: {exc}"
                   )
 
+              # This publisher intentionally handles UTF-8 text files only.
+              # Binary assets use a different/manual path.
               try:
                   content_bytes.decode(
                       "utf-8"
@@ -136,6 +170,8 @@ jobs:
                       f"UTF-8 text: {exc}"
                   )
 
+              # New nested paths are allowed; create their directories as
+              # needed before writing the exact decoded bytes.
               target.parent.mkdir(
                   parents=True,
                   exist_ok=True
@@ -150,6 +186,8 @@ jobs:
                   f"({len(content_bytes)} bytes)"
               )
 
+          # Deletes are intentionally strict. A typo should fail loudly rather
+          # than making a successful-looking commit that deleted nothing.
           for path in delete:
               target = resolve_repository_path(
                   path
@@ -171,6 +209,8 @@ jobs:
                   f"Deleted {path}"
               )
 
+          # Carry the requested commit message across the step boundary in a
+          # temporary file. Empty/missing messages receive a safe default.
           commit_message = str(
               request.get(
                   "commit_message",
@@ -191,6 +231,9 @@ jobs:
           )
           PY
 
+      # Commit everything changed by the mailbox request. If the requested
+      # state already matches the repository, finish successfully with no
+      # empty commit.
       - name: Commit and push
         run: |
           if git diff --quiet && \
