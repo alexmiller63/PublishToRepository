@@ -1,25 +1,8 @@
-# Publish to Repository
-#
-# This is the normal, parameterless publishing path.
-# A Google Doc acts as a small mailbox: ChatGPT places one JSON request in
-# the document, then this workflow exports that document as plain text,
-# validates the request, applies the requested text-file changes, and commits
-# them to this repository.
-#
-# An empty mailbox is a normal idle state. It means there is nothing to
-# publish and the workflow exits successfully without changing the repository.
-#
-# The Google Doc ID lives in tools/id.txt so the workflow itself does not need
-# to change if the mailbox contents change.
-
 name: Publish to Repository
 
-# Publishing is deliberately manual. After the mailbox has been prepared,
-# press "Run workflow" in GitHub Actions.
 on:
   workflow_dispatch:
 
-# The final step may commit requested changes back to this repository.
 permissions:
   contents: write
 
@@ -28,14 +11,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Work on a normal checkout so filesystem operations and git commands
-      # behave exactly as they would in a local clone.
       - name: Check out repository
         uses: actions/checkout@v4
 
-      # Export the mailbox as plain text. The document itself contains either
-      # one JSON request or nothing at all; no Markdown fences or explanatory
-      # prose belong in it.
       - name: Fetch publish mailbox
         run: |
           DOC_ID="$(tr -d '[:space:]' < tools/id.txt)"
@@ -49,9 +27,6 @@ jobs:
             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
             --output /tmp/publish-mailbox.txt
 
-      # Parse and validate the mailbox before touching repository files.
-      # File contents travel as Base64 so Google Docs cannot reformat, quote,
-      # normalize, or otherwise munge the source text in transit.
       - name: Apply changes from mailbox
         run: |
           python3 - <<'PY'
@@ -62,51 +37,31 @@ jobs:
 
           mailbox = Path("/tmp/publish-mailbox.txt")
 
-          # utf-8-sig accepts an optional BOM. Whitespace alone counts as an
-          # empty mailbox and is a normal, successful no-op.
           mailbox_text = mailbox.read_text(
               encoding="utf-8-sig"
           ).strip(" \t\r\n\ufeff")
 
           if not mailbox_text:
-              print(
-                  "Mailbox is empty. "
-                  "Nothing to publish."
-              )
-
-              Path(
-                  "/tmp/commit-message.txt"
-              ).write_text(
+              print("Mailbox is empty. Nothing to publish.")
+              Path("/tmp/commit-message.txt").write_text(
                   "Publish repository changes",
-                  encoding="utf-8"
+                  encoding="utf-8",
               )
-
               raise SystemExit(0)
 
-          # A non-empty mailbox must contain exactly one JSON object.
-          # json.loads rejects duplicate payloads and trailing prose.
-          request = json.loads(
-              mailbox_text
-          )
+          request = json.loads(mailbox_text)
 
           if not isinstance(request, dict):
-              raise SystemExit(
-                  "Mailbox must contain a JSON object"
-              )
+              raise SystemExit("Mailbox must contain a JSON object")
 
-          # A request may write files, delete files, or do both.
           files = request.get("files", [])
           delete = request.get("delete", [])
 
           if not isinstance(files, list):
-              raise SystemExit(
-                  "files must be an array"
-              )
+              raise SystemExit("files must be an array")
 
           if not isinstance(delete, list):
-              raise SystemExit(
-                  "delete must be an array"
-              )
+              raise SystemExit("delete must be an array")
 
           if not files and not delete:
               raise SystemExit(
@@ -115,8 +70,6 @@ jobs:
 
           root = Path.cwd().resolve()
 
-          # Resolve every requested path underneath the checked-out repository.
-          # This blocks absolute/parent traversal from escaping the repo.
           def resolve_repository_path(path):
               if not isinstance(path, str) or not path.strip():
                   raise SystemExit(
@@ -129,91 +82,48 @@ jobs:
                   target.relative_to(root)
               except ValueError:
                   raise SystemExit(
-                      "Refusing path outside "
-                      f"repository: {path}"
+                      f"Refusing path outside repository: {path}"
                   )
 
               return target
 
-          # Write complete files rather than patches. This keeps the mailbox
-          # protocol simple and makes the committed file exactly match the
-          # bytes supplied in content_base64.
           for item in files:
               if not isinstance(item, dict):
-                  raise SystemExit(
-                      "Invalid file entry"
-                  )
+                  raise SystemExit("Invalid file entry")
 
               path = item.get("path")
-              content_base64 = item.get(
-                  "content_base64"
-              )
+              content_base64 = item.get("content_base64")
+              target = resolve_repository_path(path)
 
-              target = resolve_repository_path(
-                  path
-              )
-
-              if not isinstance(
-                  content_base64,
-                  str
-              ):
+              if not isinstance(content_base64, str):
                   raise SystemExit(
-                      f"File {path} is missing "
-                      "content_base64"
+                      f"File {path} is missing content_base64"
                   )
 
-              # validate=True rejects malformed Base64 instead of trying to
-              # recover silently from damaged mailbox data.
               try:
-                  content_bytes = (
-                      base64.b64decode(
-                          content_base64,
-                          validate=True
-                      )
+                  content_bytes = base64.b64decode(
+                      content_base64,
+                      validate=True,
                   )
-              except (
-                  binascii.Error,
-                  ValueError
-              ) as exc:
+              except (binascii.Error, ValueError) as exc:
                   raise SystemExit(
-                      f"Invalid Base64 content "
-                      f"for {path}: {exc}"
+                      f"Invalid Base64 content for {path}: {exc}"
                   )
 
-              # This publisher intentionally handles UTF-8 text files only.
-              # Binary assets use a different/manual path.
               try:
-                  content_bytes.decode(
-                      "utf-8"
-                  )
+                  content_bytes.decode("utf-8")
               except UnicodeDecodeError as exc:
                   raise SystemExit(
-                      f"File {path} is not valid "
-                      f"UTF-8 text: {exc}"
+                      f"File {path} is not valid UTF-8 text: {exc}"
                   )
 
-              # New nested paths are allowed; create their directories as
-              # needed before writing the exact decoded bytes.
-              target.parent.mkdir(
-                  parents=True,
-                  exist_ok=True
-              )
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_bytes(content_bytes)
 
-              target.write_bytes(
-                  content_bytes
-              )
+              print(f"Wrote {path} ({len(content_bytes)} bytes)")
 
-              print(
-                  f"Wrote {path} "
-                  f"({len(content_bytes)} bytes)"
-              )
-
-          # Deletes are intentionally strict. A typo should fail loudly rather
-          # than making a successful-looking commit that deleted nothing.
           for path in delete:
-              target = resolve_repository_path(
-                  path
-              )
+              target = resolve_repository_path(path)
 
               if not target.exists():
                   raise SystemExit(
@@ -226,36 +136,24 @@ jobs:
                   )
 
               target.unlink()
+              print(f"Deleted {path}")
 
-              print(
-                  f"Deleted {path}"
-              )
-
-          # Carry the requested commit message across the step boundary in a
-          # temporary file. Empty/missing messages receive a safe default.
           commit_message = str(
               request.get(
                   "commit_message",
-                  "Publish repository changes"
+                  "Publish repository changes",
               )
           ).strip()
 
           if not commit_message:
-              commit_message = (
-                  "Publish repository changes"
-              )
+              commit_message = "Publish repository changes"
 
-          Path(
-              "/tmp/commit-message.txt"
-          ).write_text(
+          Path("/tmp/commit-message.txt").write_text(
               commit_message,
-              encoding="utf-8"
+              encoding="utf-8",
           )
           PY
 
-      # Commit everything changed by the mailbox request. An empty mailbox,
-      # or a request whose desired state already exists, reaches this step
-      # with no Git changes and exits successfully without creating a commit.
       - name: Commit and push
         run: |
           if git diff --quiet && \
@@ -264,9 +162,7 @@ jobs:
             exit 0
           fi
 
-          git config user.name \
-            "github-actions[bot]"
-
+          git config user.name "github-actions[bot]"
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
