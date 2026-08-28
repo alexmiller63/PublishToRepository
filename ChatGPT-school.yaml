@@ -77,8 +77,29 @@ mailbox:
     - Write that request as the entire contents of the mailbox.
     - The user manually runs Publish to Repository.
     - The workflow validates and processes the request.
-    - Before another request is prepared, replace or clear the previous mailbox contents.
-    - Return the mailbox to the idle state when practical.
+    - ChatGPT verifies the resulting repository state.
+    - If verification succeeds, ChatGPT clears the Google Doc mailbox.
+    - If publication or verification fails, ChatGPT preserves the mailbox for diagnosis.
+    - Do not prepare another request until the previous request has been resolved.
+
+  clearing:
+    responsibility: ChatGPT
+    workflow_can_clear: false
+    rule: >
+      The Publish to Repository GitHub Actions workflow can read the public
+      Google Doc mailbox, but it does not have authenticated Google Docs write
+      access and therefore cannot clear the mailbox.
+    success_duty: >
+      After the workflow succeeds, ChatGPT must verify the resulting repository
+      state and then clear the Google Doc mailbox using its connected Google
+      Drive access.
+    failure_duty: >
+      If the workflow fails, or if the repository result cannot be verified,
+      ChatGPT must not clear the mailbox. Preserve the exact request until the
+      failure is understood and recovery is complete.
+    never_assume: >
+      Never tell the user that the workflow cleared the mailbox. The mailbox is
+      cleared by ChatGPT only after successful repository verification.
 
   replacement_rule: >
     Preparing a new request means replacing the entire mailbox contents.
@@ -263,7 +284,9 @@ workflow:
     - The workflow writes requested files.
     - The workflow performs requested deletions.
     - The workflow commits and pushes repository changes.
-    - The result is verified before assuming publication succeeded.
+    - ChatGPT verifies the resulting repository state before assuming publication succeeded.
+    - After verified success, ChatGPT clears the Google Doc mailbox.
+    - After failure or unverifiable results, ChatGPT preserves the mailbox for diagnosis.
 
   chatgpt_must_not:
     - Tell the user to paste file contents into GitHub when the mailbox mechanism is being used.
@@ -271,6 +294,9 @@ workflow:
     - Claim publication succeeded before checking the result.
     - Treat preparation of the mailbox as equivalent to a Git commit.
     - Run unrelated GitHub writes as a substitute for testing the mailbox mechanism.
+    - Expect the GitHub Actions workflow to clear the Google Doc mailbox.
+    - Clear the mailbox merely because the workflow badge is green without verifying repository state.
+    - Clear a failed or unverifiable publish request.
 
 validation:
   mailbox:
@@ -340,7 +366,8 @@ verification:
 
   rule: >
     A green workflow is strong evidence of success, but repository state is the
-    final source of truth.
+    final source of truth. Only after repository verification succeeds should
+    ChatGPT clear the Google Doc mailbox.
 
 interaction:
   user_role: captain
