@@ -27,7 +27,7 @@ jobs:
             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
             --output /tmp/publish-bridge.txt
 
-      - name: Write files from bridge
+      - name: Apply changes from bridge
         run: |
           python3 - <<'PY'
           import base64
@@ -48,14 +48,43 @@ jobs:
                   "Bridge must contain a JSON object"
               )
 
-          files = request.get("files")
+          files = request.get("files", [])
+          delete = request.get("delete", [])
 
-          if not isinstance(files, list) or not files:
+          if not isinstance(files, list):
               raise SystemExit(
-                  "Bridge must contain a non-empty files array"
+                  "files must be an array"
+              )
+
+          if not isinstance(delete, list):
+              raise SystemExit(
+                  "delete must be an array"
+              )
+
+          if not files and not delete:
+              raise SystemExit(
+                  "Bridge must contain files or delete entries"
               )
 
           root = Path.cwd().resolve()
+
+          def resolve_repository_path(path):
+              if not isinstance(path, str) or not path.strip():
+                  raise SystemExit(
+                      "Repository path must be a non-empty string"
+                  )
+
+              target = (root / path).resolve()
+
+              try:
+                  target.relative_to(root)
+              except ValueError:
+                  raise SystemExit(
+                      "Refusing path outside "
+                      f"repository: {path}"
+                  )
+
+              return target
 
           for item in files:
               if not isinstance(item, dict):
@@ -68,11 +97,9 @@ jobs:
                   "content_base64"
               )
 
-              if not isinstance(path, str) \
-                      or not path.strip():
-                  raise SystemExit(
-                      "File entry is missing path"
-                  )
+              target = resolve_repository_path(
+                  path
+              )
 
               if not isinstance(
                   content_base64,
@@ -81,18 +108,6 @@ jobs:
                   raise SystemExit(
                       f"File {path} is missing "
                       "content_base64"
-                  )
-
-              target = (
-                  root / path
-              ).resolve()
-
-              try:
-                  target.relative_to(root)
-              except ValueError:
-                  raise SystemExit(
-                      "Refusing path outside "
-                      f"repository: {path}"
                   )
 
               try:
@@ -133,6 +148,27 @@ jobs:
               print(
                   f"Wrote {path} "
                   f"({len(content_bytes)} bytes)"
+              )
+
+          for path in delete:
+              target = resolve_repository_path(
+                  path
+              )
+
+              if not target.exists():
+                  raise SystemExit(
+                      f"Cannot delete missing file: {path}"
+                  )
+
+              if not target.is_file():
+                  raise SystemExit(
+                      f"Refusing to delete non-file: {path}"
+                  )
+
+              target.unlink()
+
+              print(
+                  f"Deleted {path}"
               )
 
           commit_message = str(
