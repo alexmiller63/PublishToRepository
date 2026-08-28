@@ -106,6 +106,28 @@ mailbox:
     It never means inserting after, concatenating with, or appending to the
     previous contents.
 
+  whole_document_write:
+    rule: >
+      When preparing or clearing the Google Doc mailbox, replace the document
+      contents as one whole-document operation. Do not use replaceAllText to
+      substitute one mailbox payload for another.
+    procedure:
+      - Read the mailbox immediately before writing.
+      - Record the current revision ID and exact content indexes.
+      - Delete the entire existing content range.
+      - Insert the newly serialized mailbox JSON exactly once at the beginning.
+      - Guard the batch update with the revision ID from the fresh read.
+      - Read the mailbox back after writing.
+      - Verify that the complete non-whitespace text parses as exactly one JSON object.
+      - Verify that the parsed object is exactly the request that was intended.
+    failure_rule: >
+      If the read-back verification fails, do not tell the user to run the
+      workflow. Diagnose and correct the mailbox first.
+    reason: >
+      Text substitution can leave unmatched punctuation or trailing data when
+      the old and new payloads differ. Whole-document delete-and-insert prevents
+      stale JSON fragments, including extra closing braces, from surviving a write.
+
   forbidden_contents:
     - Markdown code fences.
     - Explanatory prose.
