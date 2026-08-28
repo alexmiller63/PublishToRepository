@@ -1,0 +1,92 @@
+name: Send ChatGPT to School
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  school:
+    name: Attend ChatGPT School
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Find school materials
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          required = [
+              Path("ChatGPT-school.yaml"),
+              Path("ChatGPT - RTFM!.md"),
+          ]
+
+          missing = [
+              str(path)
+              for path in required
+              if not path.is_file()
+          ]
+
+          if missing:
+              print("ChatGPT cannot attend school.")
+              print("Missing required school materials:")
+
+              for path in missing:
+                  print(f"  - {path}")
+
+              raise SystemExit(1)
+
+          print("Required school materials found.")
+          PY
+
+      - name: Validate ChatGPT school
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          school_path = Path("ChatGPT-school.yaml")
+
+          try:
+              school = yaml.safe_load(
+                  school_path.read_text(encoding="utf-8")
+              )
+          except Exception as exc:
+              raise SystemExit(
+                  f"Cannot read ChatGPT-school.yaml: {exc}"
+              )
+
+          if not isinstance(school, dict):
+              raise SystemExit(
+                  "ChatGPT-school.yaml must contain a YAML mapping."
+              )
+
+          print("ChatGPT-school.yaml is valid YAML.")
+          PY
+
+      - name: Read the manual
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manual = Path(
+              "ChatGPT - RTFM!.md"
+          ).read_text(encoding="utf-8")
+
+          if not manual.strip():
+              raise SystemExit(
+                  "ChatGPT - RTFM!.md is empty."
+              )
+
+          print("ChatGPT - RTFM!.md is readable.")
+          PY
+
+      - name: Graduate
+        run: |
+          echo "ChatGPT attended school."
+          echo "School materials validated successfully."
+          echo "ChatGPT may now report for work."
