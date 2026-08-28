@@ -27,13 +27,17 @@ jobs:
             "https://docs.google.com/document/d/${DOC_ID}/export?format=txt" \
             --output /tmp/publish-mailbox.txt
 
-      - name: Apply changes from mailbox
+      - name: Validate and apply mailbox
         run: |
           python3 - <<'PY'
           import base64
           import binascii
+          import hashlib
+          import hmac
           import json
+          import re
           from pathlib import Path
+
 
           mailbox = Path("/tmp/publish-mailbox.txt")
 
@@ -49,26 +53,45 @@ jobs:
               )
               raise SystemExit(0)
 
-          request = json.loads(mailbox_text)
+
+          try:
+              request = json.loads(mailbox_text)
+          except json.JSONDecodeError as exc:
+              raise SystemExit(
+                  f"Invalid mailbox JSON: {exc}"
+              )
+
 
           if not isinstance(request, dict):
-              raise SystemExit("Mailbox must contain a JSON object")
+              raise SystemExit(
+                  "Mailbox must contain a JSON object"
+              )
+
 
           files = request.get("files", [])
           delete = request.get("delete", [])
 
+
           if not isinstance(files, list):
-              raise SystemExit("files must be an array")
+              raise SystemExit(
+                  "files must be an array"
+              )
+
 
           if not isinstance(delete, list):
-              raise SystemExit("delete must be an array")
+              raise SystemExit(
+                  "delete must be an array"
+              )
+
 
           if not files and not delete:
               raise SystemExit(
                   "Mailbox must contain files or delete entries"
               )
 
+
           root = Path.cwd().resolve()
+
 
           def resolve_repository_path(path):
               if not isinstance(path, str) or not path.strip():
@@ -87,56 +110,389 @@ jobs:
 
               return target
 
-          for item in files:
-              if not isinstance(item, dict):
-                  raise SystemExit("Invalid file entry")
 
-              path = item.get("path")
-              content_base64 = item.get("content_base64")
-              target = resolve_repository_path(path)
-
-              if not isinstance(content_base64, str):
+          def decode_base64(value, description):
+              if not isinstance(value, str):
                   raise SystemExit(
-                      f"File {path} is missing content_base64"
+                      f"{description} must be a Base64 string"
                   )
 
               try:
-                  content_bytes = base64.b64decode(
-                      content_base64,
+                  return base64.b64decode(
+                      value,
                       validate=True,
                   )
               except (binascii.Error, ValueError) as exc:
                   raise SystemExit(
-                      f"Invalid Base64 content for {path}: {exc}"
+                      f"Invalid Base64 in {description}: {exc}"
                   )
+
+
+          def validate_sha256(value, path):
+              if not isinstance(value, str):
+                  raise SystemExit(
+                      f"File {path} is missing sha256"
+                  )
+
+              normalized = value.lower()
+
+              if not re.fullmatch(
+                  r"[0-9a-f]{64}",
+                  normalized,
+              ):
+                  raise SystemExit(
+                      f"Invalid SHA-256 value for {path}"
+                  )
+
+              return normalized
+
+
+          def decode_chunked_file(item, path):
+              chunks = item.get("content_chunks")
+              chunk_count = item.get("chunk_count")
+              expected_sha256 = validate_sha256(
+                  item.get("sha256"),
+                  path,
+              )
+              expected_size = item.get("size_bytes")
+
+
+              if not isinstance(chunks, list) or not chunks:
+                  raise SystemExit(
+                      f"File {path} must contain "
+                      "a non-empty content_chunks array"
+                  )
+
+
+              if (
+                  not isinstance(chunk_count, int)
+                  or isinstance(chunk_count, bool)
+                  or chunk_count < 1
+              ):
+                  raise SystemExit(
+                      f"Invalid chunk_count for {path}"
+                  )
+
+
+              if chunk_count != len(chunks):
+                  raise SystemExit(
+                      f"Chunk count mismatch for {path}: "
+                      f"expected {chunk_count}, "
+                      f"received {len(chunks)}"
+                  )
+
+
+              if (
+                  not isinstance(expected_size, int)
+                  or isinstance(expected_size, bool)
+                  or expected_size < 0
+              ):
+                  raise SystemExit(
+                      f"Invalid size_bytes for {path}"
+                  )
+
+
+              decoded_chunks = []
+
+
+              for expected_index, chunk in enumerate(chunks):
+                  if not isinstance(chunk, dict):
+                      raise SystemExit(
+                          f"Invalid chunk entry "
+                          f"{expected_index} for {path}"
+                      )
+
+
+                  actual_index = chunk.get("index")
+
+
+                  if actual_index != expected_index:
+                      raise SystemExit(
+                          f"Chunk sequence error for {path}: "
+                          f"expected index {expected_index}, "
+                          f"received {actual_index}"
+                      )
+
+
+                  content_base64 = chunk.get(
+                      "content_base64"
+                  )
+
+
+                  decoded = decode_base64(
+                      content_base64,
+                      (
+                          f"{path} chunk "
+                          f"{expected_index}"
+                      ),
+                  )
+
+
+                  decoded_chunks.append(decoded)
+
+
+              content_bytes = b"".join(decoded_chunks)
+
+
+              actual_size = len(content_bytes)
+
+
+              if actual_size != expected_size:
+                  raise SystemExit(
+                      f"Size mismatch for {path}: "
+                      f"expected {expected_size} bytes, "
+                      f"received {actual_size} bytes"
+                  )
+
+
+              actual_sha256 = hashlib.sha256(
+                  content_bytes
+              ).hexdigest()
+
+
+              if not hmac.compare_digest(
+                  actual_sha256,
+                  expected_sha256,
+              ):
+                  raise SystemExit(
+                      f"SHA-256 mismatch for {path}: "
+                      f"expected {expected_sha256}, "
+                      f"received {actual_sha256}"
+                  )
+
+
+              return content_bytes
+
+
+          def decode_legacy_file(item, path):
+              content_base64 = item.get(
+                  "content_base64"
+              )
+
+
+              content_bytes = decode_base64(
+                  content_base64,
+                  path,
+              )
+
+
+              if "size_bytes" in item:
+                  expected_size = item["size_bytes"]
+
+                  if (
+                      not isinstance(expected_size, int)
+                      or isinstance(expected_size, bool)
+                      or expected_size < 0
+                  ):
+                      raise SystemExit(
+                          f"Invalid size_bytes for {path}"
+                      )
+
+                  if len(content_bytes) != expected_size:
+                      raise SystemExit(
+                          f"Size mismatch for {path}: "
+                          f"expected {expected_size} bytes, "
+                          f"received {len(content_bytes)} bytes"
+                      )
+
+
+              if "sha256" in item:
+                  expected_sha256 = validate_sha256(
+                      item["sha256"],
+                      path,
+                  )
+
+                  actual_sha256 = hashlib.sha256(
+                      content_bytes
+                  ).hexdigest()
+
+                  if not hmac.compare_digest(
+                      actual_sha256,
+                      expected_sha256,
+                  ):
+                      raise SystemExit(
+                          f"SHA-256 mismatch for {path}: "
+                          f"expected {expected_sha256}, "
+                          f"received {actual_sha256}"
+                      )
+
+
+              return content_bytes
+
+
+          prepared_writes = []
+          prepared_deletes = []
+
+          write_paths = set()
+          delete_paths = set()
+
+
+          #
+          # PRE-FLIGHT VALIDATION
+          #
+          # Nothing is written or deleted until every requested
+          # operation has successfully passed validation.
+          #
+
+          for item in files:
+              if not isinstance(item, dict):
+                  raise SystemExit(
+                      "Invalid file entry"
+                  )
+
+
+              path = item.get("path")
+              target = resolve_repository_path(path)
+
+
+              if path in write_paths:
+                  raise SystemExit(
+                      f"Duplicate file write: {path}"
+                  )
+
+
+              write_paths.add(path)
+
+
+              has_legacy = (
+                  "content_base64" in item
+              )
+
+              has_chunked = (
+                  "content_chunks" in item
+              )
+
+
+              if has_legacy and has_chunked:
+                  raise SystemExit(
+                      f"File {path} cannot contain both "
+                      "content_base64 and content_chunks"
+                  )
+
+
+              if not has_legacy and not has_chunked:
+                  raise SystemExit(
+                      f"File {path} contains no file content"
+                  )
+
+
+              if has_chunked:
+                  content_bytes = decode_chunked_file(
+                      item,
+                      path,
+                  )
+              else:
+                  print(
+                      f"WARNING: {path} uses legacy "
+                      "single-string Base64 transport."
+                  )
+
+                  content_bytes = decode_legacy_file(
+                      item,
+                      path,
+                  )
+
 
               try:
                   content_bytes.decode("utf-8")
               except UnicodeDecodeError as exc:
                   raise SystemExit(
-                      f"File {path} is not valid UTF-8 text: {exc}"
+                      f"File {path} is not valid "
+                      f"UTF-8 text: {exc}"
                   )
 
-              target.parent.mkdir(parents=True, exist_ok=True)
-              target.write_bytes(content_bytes)
 
-              print(f"Wrote {path} ({len(content_bytes)} bytes)")
+              prepared_writes.append(
+                  (
+                      path,
+                      target,
+                      content_bytes,
+                  )
+              )
+
 
           for path in delete:
               target = resolve_repository_path(path)
+
+
+              if path in delete_paths:
+                  raise SystemExit(
+                      f"Duplicate delete entry: {path}"
+                  )
+
+
+              if path in write_paths:
+                  raise SystemExit(
+                      f"Path cannot be written and deleted "
+                      f"in the same request: {path}"
+                  )
+
+
+              delete_paths.add(path)
+
 
               if not target.exists():
                   raise SystemExit(
                       f"Cannot delete missing file: {path}"
                   )
 
+
               if not target.is_file():
                   raise SystemExit(
                       f"Refusing to delete non-file: {path}"
                   )
 
+
+              prepared_deletes.append(
+                  (
+                      path,
+                      target,
+                  )
+              )
+
+
+          print(
+              "Pre-flight validation passed."
+          )
+
+          print(
+              f"Validated {len(prepared_writes)} "
+              f"file write(s) and "
+              f"{len(prepared_deletes)} deletion(s)."
+          )
+
+
+          #
+          # APPLY
+          #
+          # Reaching this section means the complete request has
+          # already passed framing, Base64, ordering, size,
+          # checksum, UTF-8, path, and deletion validation.
+          #
+
+          for path, target, content_bytes in prepared_writes:
+              target.parent.mkdir(
+                  parents=True,
+                  exist_ok=True,
+              )
+
+              target.write_bytes(
+                  content_bytes
+              )
+
+              print(
+                  f"Wrote {path} "
+                  f"({len(content_bytes)} bytes)"
+              )
+
+
+          for path, target in prepared_deletes:
               target.unlink()
-              print(f"Deleted {path}")
+
+              print(
+                  f"Deleted {path}"
+              )
+
 
           commit_message = str(
               request.get(
@@ -145,10 +501,16 @@ jobs:
               )
           ).strip()
 
-          if not commit_message:
-              commit_message = "Publish repository changes"
 
-          Path("/tmp/commit-message.txt").write_text(
+          if not commit_message:
+              commit_message = (
+                  "Publish repository changes"
+              )
+
+
+          Path(
+              "/tmp/commit-message.txt"
+          ).write_text(
               commit_message,
               encoding="utf-8",
           )
