@@ -1,17 +1,384 @@
 version: 1
-purpose: Guide ChatGPT in constructing PublishToRepository mailbox JSON.
+
+name: PublishToRepository ChatGPT School
+
+purpose: >
+  Teach ChatGPT how to use the PublishToRepository system safely and
+  consistently. The system allows ChatGPT and the user to agree on repository
+  changes in conversation, place one machine-readable publish request into a
+  Google Doc mailbox, and let the user publish those changes by manually
+  running the parameterless Publish to Repository GitHub Actions workflow.
+
+principles:
+  - The repository is the source of truth for existing files.
+  - Never invent an existing repository path or filename.
+  - Verify before modifying or deleting.
+  - New paths and filenames may be chosen only when intentionally creating new files.
+  - Publish complete files rather than patches or fragments.
+  - Preserve file bytes exactly by transporting UTF-8 text as Base64.
+  - The mailbox is a transport mechanism, not a document or permanent store.
+  - The mailbox contains at most one publish request.
+  - A new publish request replaces the entire previous mailbox contents.
+  - Never append a publish request to an existing request.
+  - The user remains captain of the final publication step.
+  - The workflow is the final validator of every request.
+
+repository:
+  source_of_truth: true
+
+  existing_files:
+    rule: >
+      Before modifying, replacing, renaming, or deleting an existing file,
+      determine its exact repository path and filename from the repository.
+    never:
+      - Guess an existing path.
+      - Guess an existing filename.
+      - Change capitalization accidentally.
+      - Assume a remembered path is still correct when it can be verified.
+
+  new_files:
+    rule: >
+      A new path or filename may be proposed when the requested operation
+      intentionally creates a genuinely new file.
+    considerations:
+      - Follow the repository's existing directory conventions.
+      - Follow established filename capitalization conventions.
+      - For web-facing filenames, prefer the repository's established naming style.
+      - Do not create duplicate files that differ only by capitalization unless explicitly intended.
+
+  reading:
+    rule: >
+      When an existing file is going to be changed, read its current repository
+      version first whenever possible.
+    reason: >
+      This prevents stale conversational copies from overwriting newer repository
+      changes and prevents accidental reconstruction of files from memory.
+
 mailbox:
+  medium: Google Doc
   format: json
   public_read: true
   secrets_allowed: false
+  maximum_messages: 1
+
+  states:
+    idle:
+      contents: empty
+      meaning: Nothing is waiting to be published.
+      workflow_behavior: Successful no-op.
+
+    prepared:
+      contents: exactly_one_json_object
+      meaning: One publish request is waiting for the user to run the workflow.
+
+  lifecycle:
+    - Begin with an empty mailbox or intentionally replace its entire contents.
+    - Construct exactly one complete publish request.
+    - Write that request as the entire contents of the mailbox.
+    - The user manually runs Publish to Repository.
+    - The workflow validates and processes the request.
+    - Before another request is prepared, replace or clear the previous mailbox contents.
+    - Return the mailbox to the idle state when practical.
+
+  replacement_rule: >
+    Preparing a new request means replacing the entire mailbox contents.
+    It never means inserting after, concatenating with, or appending to the
+    previous contents.
+
+  forbidden_contents:
+    - Markdown code fences.
+    - Explanatory prose.
+    - Human-readable notes outside the JSON object.
+    - Multiple JSON objects.
+    - Trailing payloads.
+    - Secrets.
+    - Credentials.
+    - Access tokens.
+    - API keys.
+    - Passwords.
+    - Binary file data represented as arbitrary text.
+
 request:
-  required: [commit_message, files, delete]
+  type: object
+
+  required:
+    - commit_message
+    - files
+    - delete
+
+  commit_message:
+    type: string
+    rule: >
+      Describe the repository change concisely and accurately.
+    examples:
+      - Update ChatGPT publishing instructions
+      - Add bartender page
+      - Correct Kilroy filename
+
   files:
-    item_required: [path, content_base64]
+    type: array
+    purpose: Files to create or completely replace.
+
+    item:
+      type: object
+
+      required:
+        - path
+        - content_base64
+
+      path:
+        type: string
+        rule: >
+          Use the exact verified repository path for an existing file.
+          A new path is allowed only for an intentionally new file.
+
+      content_base64:
+        type: string
+        rule: >
+          Base64 encoding of the complete desired UTF-8 file bytes.
+
   delete:
+    type: array
     item_type: string
-rules:
-  - Encode complete UTF-8 file bytes as Base64.
-  - Never put secrets in the mailbox.
-  - Verify existing paths before modifying or deleting.
-  - The workflow is the final validator; this file is guidance.
+    purpose: Exact repository paths of files intentionally being removed.
+    rule: >
+      Verify every existing path before placing it in this array.
+
+text_files:
+  supported: true
+  encoding: UTF-8
+
+  transport:
+    encoding: Base64
+
+  procedure:
+    - Determine the complete desired contents of the file.
+    - Encode those exact UTF-8 bytes as Base64.
+    - Put the encoded value in content_base64.
+    - Let the workflow decode and write those exact bytes.
+
+  reason: >
+    Google Docs is being used only as a mailbox. It may alter typography,
+    quotation marks, whitespace, line endings, or other textual presentation.
+    Base64 prevents those transformations from changing the source file bytes.
+
+  complete_file_rule: >
+    content_base64 represents the complete resulting file, not a patch,
+    insertion, diff, or partial replacement.
+
+binary_files:
+  supported_by_mailbox: false
+
+  rule: >
+    Do not send binary assets through this UTF-8 text publishing protocol.
+
+  examples:
+    - PNG
+    - JPEG
+    - GIF
+    - HEIC
+    - PDF
+    - ZIP
+    - executable files
+
+  handling: >
+    Use the established separate/manual binary-file path rather than attempting
+    to disguise binary bytes as UTF-8 text.
+
+editing:
+  before_edit:
+    - Identify the repository.
+    - Identify the exact target path.
+    - Verify the target if it already exists.
+    - Read the current version when modifying an existing file.
+    - Determine the complete desired replacement contents.
+
+  during_edit:
+    - Preserve unrelated content.
+    - Preserve intentional formatting.
+    - Preserve exact capitalization unless changing it intentionally.
+    - Avoid gratuitous reformatting.
+    - Avoid changing whitespace merely because a formatter prefers another style.
+    - Keep the requested change as focused as practical.
+
+  after_edit:
+    - Verify that the complete resulting file is valid UTF-8 text.
+    - Encode the complete file bytes as Base64.
+    - Include the exact path and encoded contents in the request.
+
+multiple_files:
+  supported: true
+
+  rule: >
+    One publish request may contain multiple complete file writes and deletions
+    when they form one coherent repository change.
+
+  benefit: >
+    Related changes can be committed together rather than requiring one workflow
+    run per file.
+
+deletion:
+  supported: true
+
+  procedure:
+    - Verify the exact existing path.
+    - Confirm that deletion is intentional.
+    - Put the path in the delete array.
+    - Do not also include the same path as a file write unless the operation has a deliberate reason.
+
+  safety: >
+    A missing delete target should be treated as an error rather than silently ignored.
+
+renaming:
+  procedure:
+    - Verify the exact existing source path.
+    - Determine the exact desired destination path.
+    - Include the destination as a complete file write.
+    - Include the old source path in delete.
+    - Preserve the original contents unless the rename also intentionally edits them.
+
+  capitalization: >
+    A capitalization-only rename is still a real rename and should be represented
+    deliberately rather than assumed to occur automatically.
+
+workflow:
+  name: Publish to Repository
+  trigger: workflow_dispatch
+  parameters: none
+  user_runs_manually: true
+
+  expected_sequence:
+    - ChatGPT and user determine the desired change.
+    - ChatGPT verifies existing repository material as needed.
+    - ChatGPT constructs the complete desired files.
+    - ChatGPT prepares exactly one mailbox JSON request.
+    - The request replaces the entire mailbox contents.
+    - ChatGPT tells the user the mailbox is ready.
+    - The user opens GitHub Actions.
+    - The user runs Publish to Repository.
+    - The workflow fetches the mailbox.
+    - The workflow parses and validates the request.
+    - The workflow Base64-decodes file contents.
+    - The workflow verifies UTF-8 text.
+    - The workflow writes requested files.
+    - The workflow performs requested deletions.
+    - The workflow commits and pushes repository changes.
+    - The result is verified before assuming publication succeeded.
+
+  chatgpt_must_not:
+    - Tell the user to paste file contents into GitHub when the mailbox mechanism is being used.
+    - Ask the user for workflow parameters because the workflow is parameterless.
+    - Claim publication succeeded before checking the result.
+    - Treat preparation of the mailbox as equivalent to a Git commit.
+    - Run unrelated GitHub writes as a substitute for testing the mailbox mechanism.
+
+validation:
+  mailbox:
+    - Empty is valid and means idle.
+    - Whitespace-only is valid and means idle.
+    - A non-empty mailbox must contain exactly one JSON object.
+    - Extra data after the JSON object is an error.
+    - Two concatenated JSON requests are invalid.
+
+  request:
+    - files must be an array.
+    - delete must be an array.
+    - At least one write or deletion must be requested.
+    - Every file write must contain path and content_base64.
+    - Base64 must decode successfully.
+    - Decoded file bytes must be valid UTF-8.
+    - Repository paths must remain inside the repository.
+
+failure_recovery:
+  general_rule: >
+    Do not repeatedly rerun a failed workflow without first understanding whether
+    the same input will produce the same failure.
+
+  json_extra_data:
+    meaning: >
+      The mailbox contains valid JSON followed by additional data, commonly
+      because a new request was appended to an old request.
+
+    recovery:
+      - Do not rerun unchanged.
+      - Inspect or clear the mailbox.
+      - Restore the mailbox to a known state.
+      - Prepare exactly one fresh request as the complete mailbox contents.
+      - Run the workflow again.
+
+  invalid_base64:
+    recovery:
+      - Do not try to repair the encoded string manually.
+      - Re-encode the complete intended UTF-8 file bytes.
+      - Replace the mailbox request with a newly constructed valid request.
+
+  invalid_utf8:
+    recovery:
+      - Determine whether the intended file is actually a text file.
+      - If binary, remove it from this publishing mechanism.
+      - If text, correct the source encoding and regenerate content_base64.
+
+  missing_path:
+    recovery:
+      - Verify the repository.
+      - Locate the exact existing path.
+      - Do not guess a replacement path.
+
+  failed_commit:
+    recovery:
+      - Inspect the workflow failure.
+      - Determine whether repository permissions, concurrent changes, or validation caused it.
+      - Correct the cause before rerunning.
+
+verification:
+  after_publish:
+    - Check workflow success.
+    - Verify the expected repository paths.
+    - Verify that requested files contain the intended contents when appropriate.
+    - Verify requested deletions occurred.
+    - Confirm that no unintended files changed.
+
+  rule: >
+    A green workflow is strong evidence of success, but repository state is the
+    final source of truth.
+
+interaction:
+  user_role: captain
+
+  chatgpt_role: >
+    Prepare and verify the repository change, construct the mailbox request,
+    diagnose failures, and tell the user when the parameterless workflow is
+    ready to run.
+
+  preferred_user_action: >
+    The ordinary user action should be only to run Publish to Repository after
+    ChatGPT has prepared the mailbox.
+
+  avoid_unnecessary_work:
+    - Do not make the user manually Base64-encode files.
+    - Do not make the user construct JSON.
+    - Do not make the user paste source files into GitHub.
+    - Do not make the user identify paths ChatGPT can verify from the repository.
+    - Do not require one publication per file when a coherent multi-file request is appropriate.
+
+examples:
+  write_one_file:
+    commit_message: Update example
+    files:
+      - path: example.txt
+        content_base64: S2lscm95IHdhcsBoZXJlIQ==
+    delete: []
+
+  delete_one_file:
+    commit_message: Remove obsolete example
+    files: []
+    delete:
+      - old-example.txt
+
+  interpretation_note: >
+    These examples describe the JSON request structure. The actual Google Doc
+    mailbox contains JSON, not YAML.
+
+final_rule: >
+  When uncertain, preserve repository state, verify before writing, and fail
+  visibly rather than guessing or silently changing unintended files.
