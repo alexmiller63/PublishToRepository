@@ -30,17 +30,23 @@ jobs:
       - name: Write files from bridge
         run: |
           python3 - <<'PY'
+          import base64
+          import binascii
           import json
           from pathlib import Path
 
           bridge = Path("/tmp/publish-bridge.txt")
 
           request = json.loads(
-              bridge.read_text(encoding="utf-8-sig").strip()
+              bridge.read_text(
+                  encoding="utf-8-sig"
+              ).strip()
           )
 
           if not isinstance(request, dict):
-              raise SystemExit("Bridge must contain a JSON object")
+              raise SystemExit(
+                  "Bridge must contain a JSON object"
+              )
 
           files = request.get("files")
 
@@ -53,26 +59,66 @@ jobs:
 
           for item in files:
               if not isinstance(item, dict):
-                  raise SystemExit("Invalid file entry")
-
-              path = item.get("path")
-              content = item.get("content")
-
-              if not isinstance(path, str) or not path.strip():
-                  raise SystemExit("File entry is missing path")
-
-              if not isinstance(content, str):
                   raise SystemExit(
-                      f"File {path} is missing string content"
+                      "Invalid file entry"
                   )
 
-              target = (root / path).resolve()
+              path = item.get("path")
+              content_base64 = item.get(
+                  "content_base64"
+              )
+
+              if not isinstance(path, str) \
+                      or not path.strip():
+                  raise SystemExit(
+                      "File entry is missing path"
+                  )
+
+              if not isinstance(
+                  content_base64,
+                  str
+              ):
+                  raise SystemExit(
+                      f"File {path} is missing "
+                      "content_base64"
+                  )
+
+              target = (
+                  root / path
+              ).resolve()
 
               try:
                   target.relative_to(root)
               except ValueError:
                   raise SystemExit(
-                      f"Refusing path outside repository: {path}"
+                      "Refusing path outside "
+                      f"repository: {path}"
+                  )
+
+              try:
+                  content_bytes = (
+                      base64.b64decode(
+                          content_base64,
+                          validate=True
+                      )
+                  )
+              except (
+                  binascii.Error,
+                  ValueError
+              ) as exc:
+                  raise SystemExit(
+                      f"Invalid Base64 content "
+                      f"for {path}: {exc}"
+                  )
+
+              try:
+                  content_bytes.decode(
+                      "utf-8"
+                  )
+              except UnicodeDecodeError as exc:
+                  raise SystemExit(
+                      f"File {path} is not valid "
+                      f"UTF-8 text: {exc}"
                   )
 
               target.parent.mkdir(
@@ -80,20 +126,14 @@ jobs:
                   exist_ok=True
               )
 
-              # SOURCE TEXT IS SACRED.
-              #
-              # Treat content as opaque UTF-8 text.
-              # Do not trim, normalize, pretty-print, reformat,
-              # convert, clean up, or otherwise modify it.
-              #
-              # The exact string supplied in the bridge is the
-              # exact string that must be written to the file.
-              target.write_text(
-                  content,
-                  encoding="utf-8"
+              target.write_bytes(
+                  content_bytes
               )
 
-              print(f"Wrote {path}")
+              print(
+                  f"Wrote {path} "
+                  f"({len(content_bytes)} bytes)"
+              )
 
           commit_message = str(
               request.get(
@@ -103,9 +143,13 @@ jobs:
           ).strip()
 
           if not commit_message:
-              commit_message = "Publish repository changes"
+              commit_message = (
+                  "Publish repository changes"
+              )
 
-          Path("/tmp/commit-message.txt").write_text(
+          Path(
+              "/tmp/commit-message.txt"
+          ).write_text(
               commit_message,
               encoding="utf-8"
           )
@@ -119,7 +163,9 @@ jobs:
             exit 0
           fi
 
-          git config user.name "github-actions[bot]"
+          git config user.name \
+            "github-actions[bot]"
+
           git config user.email \
             "41898282+github-actions[bot]@users.noreply.github.com"
 
