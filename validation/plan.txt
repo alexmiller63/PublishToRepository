@@ -1,0 +1,94 @@
+PublishToRepository Validation Plan
+
+1. Smoke test — single create
+- Mailbox contains 1 new small text file.
+- Workflow creates it.
+- Verify exact contents in repository.
+- Clear mailbox and verify empty.
+
+2. Exact replacement
+- Replace that file with different contents.
+- Verify old contents are completely gone.
+- Confirms whole-file replacement rather than accidental append/munging.
+
+3. Single delete
+- Delete the test file.
+- Verify it is absent.
+- Verify unrelated repository files are untouched.
+
+4. Multiple creates in one transaction
+- Create 3–5 files in different permitted directories.
+- Mix .txt, .md, .html.
+- Verify every path, byte count, and content.
+
+5. Mixed transaction
+- In one mailbox request: create 1 file, modify 1 existing test file, delete 1 test file.
+- All operations should occur in one successful publish.
+
+6. Rename simulation
+- Create new pathname with identical contents and delete old pathname.
+- Verify old is gone and new is byte-identical.
+- Repeat with a changed filename case.
+
+7. Image fixture test
+- Add source images.
+- Run Convert Images to Web PNG.
+- Verify generated *-web.png.
+- Include an uppercase *-web.PNG and verify normalization to lowercase .png.
+- Verify source image remains unchanged.
+
+8. Payload integrity test
+- Publish a moderately large binary/image payload using Base64/chunks.
+- Verify size_bytes.
+- Verify SHA-256.
+- Confirm repository bytes exactly match the request.
+
+9. Preflight failure / atomicity
+- Construct a mailbox request containing several valid operations plus one intentionally invalid operation.
+- Workflow must fail before changing anything.
+- Verify none of the valid operations leaked through.
+
+10. Security boundary
+- Attempt creation/modification/deletion inside .github/workflows/.
+- Must fail loudly.
+- Verify workflow file remains unchanged.
+- Repeat with permitted files plus one forbidden workflow change; nothing should mutate.
+
+11. Malformed-mailbox tests
+- Extra }.
+- Two JSON objects concatenated.
+- Invalid Base64.
+- Wrong size_bytes.
+- Wrong SHA-256.
+- Wrong types for files or delete.
+- Empty no-op request.
+- Every one must fail safely with repository unchanged.
+
+12. Mailbox lifecycle test
+- Successful request stays in mailbox until repository verification.
+- Then ChatGPT clears it.
+- Verify truly empty, not a no-op JSON object.
+- Run publisher against empty mailbox and confirm safe failure/no mutation.
+
+13. Collision tests
+- Create destination where a file already exists unexpectedly.
+- Rename into an occupied pathname.
+- Duplicate requested paths.
+- Same file listed for both write and delete.
+- Validate deterministic failure behavior.
+
+14. Rosencrantz & Guildenstern integration test
+- Two landing pages.
+- Their prepared Web-PNG images.
+- Several supporting files.
+- Perform: create → modify → rename → swap images → delete → recreate → rename again.
+- Plant explicit Kilroys in selected versions so we can tell exactly which generation survived.
+
+15. Full stress test
+- Large mailbox with many simultaneous operations across the two miniature sites.
+- Multiple creates, modifications, deletes, rename simulations, images, Markdown, HTML, text, and deliberate Kilroys.
+- Include one run that should succeed completely.
+- Include a second nearly identical run with one poisoned operation that must fail completely atomically.
+- Final verification compares the entire expected test tree against the repository, not just spot-check files.
+
+Principle: preserve fixtures and expected outcomes so this is a repeatable validation suite, not a one-off test.
