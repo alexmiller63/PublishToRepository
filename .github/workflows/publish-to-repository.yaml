@@ -102,10 +102,32 @@ jobs:
               target = (root / path).resolve()
 
               try:
-                  target.relative_to(root)
+                  relative = target.relative_to(root)
               except ValueError:
                   raise SystemExit(
                       f"Refusing path outside repository: {path}"
+                  )
+
+              #
+              # SECURITY BOUNDARY — WORKFLOW FILES
+              #
+              # PublishToRepository must NEVER create, modify,
+              # rename, or delete GitHub Actions workflow files.
+              #
+              # Workflow files are executable repository
+              # infrastructure and must be maintained outside
+              # the mailbox publishing mechanism.
+              #
+              # DO NOT REMOVE OR WEAKEN THIS CHECK.
+              #
+              if relative.parts[:2] == (".github", "workflows"):
+                  raise SystemExit(
+                      "SECURITY POLICY VIOLATION:\n"
+                      "PublishToRepository is NEVER permitted to create, modify, rename,\n"
+                      "or delete files under .github/workflows/.\n\n"
+                      "Workflow files are executable repository infrastructure.\n"
+                      "They must be changed outside the mailbox publishing mechanism.\n\n"
+                      f"REFUSED: {path}"
                   )
 
               return target
