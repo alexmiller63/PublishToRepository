@@ -132,8 +132,7 @@ jobs:
                   )
 
 
-              if "
-" in path or "" in path:
+              if "\n" in path or "\r" in path:
                   raise SystemExit(
                       f"Invalid newline in path: {path!r}"
                   )
@@ -220,9 +219,7 @@ jobs:
           Path(
               "/tmp/write-files-paths.txt"
           ).write_text(
-              "
-".join(paths) + "
-",
+              "\n".join(paths) + "\n",
               encoding="utf-8"
           )
 
@@ -242,15 +239,19 @@ jobs:
 
       - name: Commit files
         run: |
-          mapfile -t FILE_PATHS             < /tmp/write-files-paths.txt
+          mapfile -t FILE_PATHS \
+            < /tmp/write-files-paths.txt
 
           COMMIT_MESSAGE="$(
             cat /tmp/write-files-commit-message.txt
           )"
 
-          chmod +x             tools/commit-generated-files.sh
+          chmod +x \
+            tools/commit-generated-files.sh
 
-          tools/commit-generated-files.sh             "$COMMIT_MESSAGE"             "${FILE_PATHS[@]}"
+          tools/commit-generated-files.sh \
+            "$COMMIT_MESSAGE" \
+            "${FILE_PATHS[@]}"
 
       - name: Close automatic write request
         if: >
@@ -264,4 +265,7 @@ jobs:
         run: |
           COMMIT_SHA="$(git rev-parse HEAD)"
 
-          gh issue close             "$ISSUE_NUMBER"             --comment             "Write completed successfully. Commit: $COMMIT_SHA"
+          gh issue close \
+            "$ISSUE_NUMBER" \
+            --comment \
+            "Write completed successfully. Commit: $COMMIT_SHA"
